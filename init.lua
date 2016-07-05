@@ -96,31 +96,81 @@ spi.setup(1, spi.MASTER, spi.CPOL_LOW, spi.CPHA_LOW, 8, 10, spi.HALFDUPLEX)
 width_pixels = 64
 height_pixels = 16
 
-width_bytes = math.floor ((width_pixels+7) / 8)
+width_bytes = math.floor((width_pixels+7) / 8)
 height_rows = height_pixels
 
--- bits here
-canvas = {}
-for i=0, height_rows-1 do
-	canvas[i] = {}
-	for j=0, width_bytes-1 do
-		canvas[i][j] = bit.bnot(bit.bor(i, j*16))
+-- bytes that can be shifted out as is
+-- indexed by AB, then a vector
+canvas = {[0]={}, [1]={}, [2]={}, [3]={}}
+for AB=0,3 do
+	for k = 0, width_bytes * height_rows / 4 - 1 do
+		canvas[AB][k] = 0xFF
 	end
 end
 
-function writeSPIData(canvas, scanrow)
-	for j=width_bytes-1,0,-1 do
-		spi.send(1, canvas[scanrow+ 0][j])
-		spi.send(1, canvas[scanrow+ 4][j])
-		spi.send(1, canvas[scanrow+ 8][j])
-		spi.send(1, canvas[scanrow+12][j])
+function get_xy_index(x, y)
+	local index   = 0
+
+	local row = math.floor(y / 4)
+	index = index + row
+
+	local xbyte = math.floor(x / 8)
+	index = index + (width_bytes - 1 - xbyte) * 4
+
+	local scanrow = y % 4
+
+	local offset  = x % 8
+
+	return scanrow, index, offset
+end
+
+print(get_xy_index(63, 0))
+print(get_xy_index(63, 4))
+print(get_xy_index(63, 8))
+print(get_xy_index(63,12))
+print(get_xy_index(55, 0))
+print(get_xy_index(63, 1))
+
+for x = 0,7 do
+	for y = 0,15 do
+		local r,i,b = get_xy_index(x*8,y)
+		canvas[r][i] = bit.bxor(0xFF, bit.bor(x, 16*y))
 	end
 end
+
+--	-- bits here
+--	canvas = {}
+--	for i=0, height_rows-1 do
+--		canvas[i] = {}
+--		for j=0, width_bytes-1 do
+--			canvas[i][j] = bit.bxor(0xFF, bit.bor(i, j*16))
+--		end
+--	end
+
+function writeSPIData(canvas, scanrow)
+	--	for j = width_bytes-1, 0, -1 do
+	--		spi.set_mosi(1, offset, 8,
+	--			canvas[scanrow+ 0][j],
+	--			canvas[scanrow+ 4][j],
+	--			canvas[scanrow+ 8][j],
+	--			canvas[scanrow+12][j])
+	--		offset = offset + 32
+	--	end
+
+	--spi.send(1, canvas[scanrow])
+end
+
+pwm.setup(dmd_oe, 1000, 100) -- 100 Hz, 10/1024 duty cycle
 
 scanrow = 0
 
 function scandisplay()
-	writeSPIData(canvas, scanrow) -- fixme: this seems to toggle something for output
+	--writeSPIData(canvas, scanrow) -- fixme: this seems to toggle something for output
+
+	--spi.send(1, canvas[scanrow])
+
+	spi.set_mosi(1, 0, 8, unpack(canvas[scanrow]))
+	spi.transaction(1, 0, 0, 0, 0, #canvas[scanrow] * 8, 0, 0)
 
 	-- disable output
 	gpio.write(dmd_oe, gpio.LOW)
@@ -138,13 +188,13 @@ function scandisplay()
 
 	-- and enable output (PWM)
 	-- PWM will be stopped at next timer cycle
-	pwm.setup(dmd_oe, 1000, 10) -- 100 Hz, 10/1024 duty cycle
+
 	pwm.start(dmd_oe)
 	--gpio.write(dmd_oe, gpio.HIGH) -- or pwm
 
-	scanrow = (scanrow + 1) % 4 -- four rows
+	scanrow = (scanrow + 1) % 4
 end
 
-tmr.alarm(1, 1, tmr.ALARM_AUTO, scandisplay)
+tmr.alarm(1, 5, tmr.ALARM_AUTO, scandisplay)
 
-tmr.alarm(2, 2000, tmr.ALARM_SINGLE, function() tmr.stop(1) end)
+tmr.alarm(2, 2000, tmr.ALARM_SINGLE, function() pwm.stop(dmd_oe) tmr.stop(1) end)
