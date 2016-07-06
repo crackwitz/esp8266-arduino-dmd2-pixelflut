@@ -22,9 +22,8 @@ function mqtt_onmessage(client, topic, message)
 		end
 
 	elseif topic == basetopic .. "/bitmap" then
-		if #message <= 64 * 16 / 8 then
-			uart.write(0, "B")
-			uart.write(0, message)
+		if #message == 64 * 16 / 8 then
+			uart.write(0, "B" .. message)
 		end
 
 	elseif topic == basetopic .. "/gameoflife" then

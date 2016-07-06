@@ -113,14 +113,35 @@ void iterate_gameoflife()
 
 void spool_bitmap()
 {
-  for (uint8_t y = 0; y < HEIGHT * 16; y += 1)
-  for (uint8_t x = 0; x < WIDTH  * 32; x += 8)
+  
+  uint8_t const left = 0, top = 0, width = dmd.width, height = dmd.height;
+  //while (Serial.available() < 4) delay(1);
+  //left   = Serial.read() ?: left;
+  //top    = Serial.read() ?: top;
+  //width  = Serial.read() ?: width;
+  //height = Serial.read() ?: height;
+
+  //int lastrecv = millis();
+  
+  for (uint8_t y = 0; y < height; y += 1)
+  for (uint8_t x = 0; x < width; x += 8)
   {
-    //if (!Serial.available()) break;
+    /*
+    while (true)
+    {
+      if (Serial.available())
+        break;
+      if (millis() - lastrecv > 1000)
+        return;
+    }
+    lastrecv = millis();
+    //*/
+
+    while (!Serial.available()) {}
     uint8_t octet = Serial.read();
 
     for (uint8_t k = 0; k < 8; k += 1)
-      dmd.setPixel((dmd.width-1)  - (x+k), (dmd.height-1) - y, ((octet >> k) & 1) ? GRAPHICS_ON : GRAPHICS_OFF);
+      dmd.setPixel((dmd.width-1)  - (left+x+k), (dmd.height-1) - (top+y), ((octet >> k) & 1) ? GRAPHICS_ON : GRAPHICS_OFF);
   }
 }
 
