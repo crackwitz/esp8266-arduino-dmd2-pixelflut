@@ -6,10 +6,28 @@ function startswith(self, prefix)
 	return string.sub(self, 1, string.len(prefix)) == prefix
 end
 
+function command_gameoflife(runval)
+	-- enable/disable or 255=clear 254=fill
+	uart.write(0, "G" .. string.char(runval))
+end
+
+function command_dutycycle(dc)
+	uart.write(0, "D" .. string.char(dc))
+end
+
 
 function mqtt_onmessage(client, topic, message)
-	if topic == basetopic .. "/dutycycle" then
-		uart.write(0, "D" .. string.char(tonumber(message)))
+	if topic == "runlevel" then
+		if message == "shutdown" then
+			command_gameoflife(255)
+
+		elseif message == "launch" then
+			command_gameoflife(1)
+
+		end
+
+	elseif topic == basetopic .. "/dutycycle" then
+		command_dutycycle(tonumber(message))
 
 	elseif topic == basetopic .. "/pixelflut" then
 		local _,_, sx, sy, sval = string.find(message, "^PX (%d+) (%d+) (%d+)$")
@@ -27,8 +45,7 @@ function mqtt_onmessage(client, topic, message)
 		end
 
 	elseif topic == basetopic .. "/gameoflife" then
-		-- enable/disable or 255=clear 254=fill
-		uart.write(0, "G" .. string.char(tonumber(message)))
+		command_gameoflife(tonumber(message))
 
 	elseif topic == basetopic .. "/gameoflife/autonoise" then
 		uart.write(0, "A" .. string.char(tonumber(message)))
@@ -41,10 +58,11 @@ end
 
 function mqtt_init()
 	m:on("connect", function(client)
+		print("subscribing")
 		tmr.start(0)
+		m:subscribe("runlevel", 0)
 		m:subscribe(basetopic .. "/#", 0)
 		m:publish(basetopic .. "/ip", ip, 0, 1)
-		print("subscribed")
 	end)
 	m:on("message", mqtt_onmessage)
 	m:connect("mqtt.space.aachen.ccc.de")
