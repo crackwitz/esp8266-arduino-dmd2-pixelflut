@@ -12,6 +12,9 @@ bool do_gameoflife = true;
 bool autonoise = true;
 uint8_t noise_amount = 0;
 
+#define NOISEHIST 8
+uint16_t noisehist[NOISEHIST] = {0};
+
 // How many displays do you have?
 const int WIDTH = 2;
 const int HEIGHT = 1;
@@ -29,7 +32,7 @@ void init_cells(uint8_t value) {
 // the setup routine runs once when you press reset:
 void setup() {
   Serial.begin(115200);
-  dmd.setBrightness(50);
+  dmd.setBrightness(5);
   dmd.begin();
 
   randomSeed(analogRead(0));
@@ -38,7 +41,6 @@ void setup() {
 
 void iterate_gameoflife()
 {
-  static uint16_t prevcount = 0;
   uint16_t curcount = 0;
   
   // Store the current generation by copying the current DMD frame contents
@@ -81,7 +83,12 @@ void iterate_gameoflife()
 
   if (autonoise)
   {
-    if (curcount == prevcount)
+    bool match = false;
+    for (int8_t i = NOISEHIST-1; i >= 0; i -= 1)
+      if (noisehist[i] == curcount)
+        match = true;
+
+    if (match)
     {
       if (noise_amount < 0xff)
       {
@@ -99,7 +106,22 @@ void iterate_gameoflife()
     }
   }
 
-  prevcount = curcount;
+  for (int8_t i = NOISEHIST-1; i >= 1; i -= 1)
+    noisehist[i] = noisehist[i-1];
+  noisehist[0] = curcount;
+}
+
+void spool_bitmap()
+{
+  for (uint8_t y = 0; y < HEIGHT * 16; y += 1)
+  for (uint8_t x = 0; x < WIDTH  * 32; x += 8)
+  {
+    //if (!Serial.available()) break;
+    uint8_t octet = Serial.read();
+
+    for (uint8_t k = 0; k < 8; k += 1)
+      dmd.setPixel((dmd.width-1)  - (x+k), (dmd.height-1) - y, ((octet >> k) & 1) ? GRAPHICS_ON : GRAPHICS_OFF);
+  }
 }
 
 void process_uart()
@@ -175,8 +197,8 @@ void process_uart()
         if (cur_available >= 4)
         {
           Serial.read();
-          const uint8_t x = dmd.width-1  - Serial.read();
-          const uint8_t y = dmd.height-1 - Serial.read();
+          const uint8_t x = (dmd.width-1)  - (uint8_t)Serial.read();
+          const uint8_t y = (dmd.height-1) - (uint8_t)Serial.read();
           const uint8_t v = Serial.read();
           dmd.setPixel(x, y, v ? GRAPHICS_ON : GRAPHICS_OFF);
           /*
@@ -189,6 +211,14 @@ void process_uart()
           */
           prev_available = 0;
         }
+        break;
+      }
+
+      case 'B':
+      {
+        Serial.read(); // discard command 'B'
+        spool_bitmap();
+        prev_available = 0;
         break;
       }
 

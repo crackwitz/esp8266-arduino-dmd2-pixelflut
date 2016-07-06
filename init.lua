@@ -2,7 +2,6 @@ m = mqtt.Client("cracki-esp-devboard", 120, nil, nil)
 
 basetopic = "cracki/esp-devboard"
 
-
 function startswith(self, prefix)
 	return string.sub(self, 1, string.len(prefix)) == prefix
 end
@@ -13,13 +12,19 @@ function mqtt_onmessage(client, topic, message)
 		uart.write(0, "D" .. string.char(tonumber(message)))
 
 	elseif topic == basetopic .. "/pixelflut" then
-		local x,y,val = string.find(message, "^PX (%d+) (%d+) (%d+)$")
-		--print("match", x, y, val)
-		if val ~= nil then
-			x = tonumber(x)
-			y = tonumber(y)
-			val = tonumber(val)
+		local _,_, sx, sy, sval = string.find(message, "^PX (%d+) (%d+) (%d+)$")
+		-- print("match", sx, sy, sval)
+		if sval ~= nil then
+			local x = tonumber(sx)
+			local y = tonumber(sy)
+			local val = tonumber(sval)
 			uart.write(0, "!" .. string.char(x, y, val))
+		end
+
+	elseif topic == basetopic .. "/bitmap" then
+		if #message <= 64 * 16 / 8 then
+			uart.write(0, "B")
+			uart.write(0, message)
 		end
 
 	elseif topic == basetopic .. "/gameoflife" then
@@ -72,4 +77,4 @@ function wlan_init()
 end
 
 wlan_init()
---dofile("telnet.lua")
+dofile("telnet.lua")
