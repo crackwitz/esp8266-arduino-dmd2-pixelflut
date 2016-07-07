@@ -45,7 +45,7 @@ end
 function mqtt_onmessage(client, topic, message)
 	if topic == "runlevel" then
 		if message == "shutdown" then
-			command_gameoflife(255)
+			comand_solid(0)
 
 		elseif message == "launch" then
 			command_gameoflife(1)
@@ -95,7 +95,7 @@ end
 
 function mqtt_init()
 	m:on("connect", function(client)
-		tmr.alarm(0, 10000, tmr.ALARM_AUTO, function() 
+		tmr.alarm(0, 60e3, tmr.ALARM_AUTO, function() 
 			local secs, usecs = rtctime.get()
 			m:publish(basetopic .. "/time", string.format("%d.%06d", secs, usecs), 0, 1)
 		end)
@@ -116,6 +116,24 @@ function wlan_gotip()
 	--print(string.format("Mask:    %s", mask))
 	--print(string.format("Gateway: %s", gateway))
 
+	tmr.alarm(5, 3600e3, tmr.ALARM_AUTO, function()
+		sntp.sync(
+			"ptbtime1.ptb.de",
+			function(secs_new, usecs_new, server)
+				local secs_own, usecs_own = rtctime.get()
+				local own = secs_own + 1e-6 * usecs_own
+				local new = secs_new + 1e-6 * usecs_new
+				local delta = new - own
+				if math.abs(delta) > 0.1 then
+					local update = own + (new - own) * 0.1
+					local isecs = math.floor(update)
+					local fsecs = update - isecs
+					rtctime.set(isecs, 1e6*fsecs)
+				end
+				m:publish(basetopic .. "/time/delta", delta, 0, 0)
+			end
+		)
+	end)
 	sntp.sync(
 		"ptbtime1.ptb.de",
 		function(secs, usecs, server)

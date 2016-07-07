@@ -220,6 +220,7 @@ void command_bitmap()
   for (uint8_t x = 0; x < dmd.width; x += 8)
     dmd.setByte(x, y, *p++);
 }
+
 void command_solid()
 {
   if (commandlen != 2) return;
