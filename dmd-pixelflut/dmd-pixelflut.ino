@@ -7,6 +7,13 @@
 
 #include <SPI.h>
 #include <DMD2.h>
+#include <fonts/SystemFont5x7.h>
+#include <fonts/Arial_Black_16.h>
+
+#define SERIAL_TIMEOUT 100
+
+uint8_t commandbuf[256];
+uint8_t commandlen = 0;
 
 bool do_gameoflife = true;
 bool autonoise = true;
@@ -32,6 +39,7 @@ void init_cells(uint8_t value) {
 // the setup routine runs once when you press reset:
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(SERIAL_TIMEOUT);
   dmd.setBrightness(5);
   dmd.begin();
 
@@ -111,138 +119,35 @@ void iterate_gameoflife()
   noisehist[0] = curcount;
 }
 
-void spool_bitmap()
+/*
+int read_with_timeout(uint16_t timeout)
 {
-  
-  uint8_t const left = 0, top = 0, width = dmd.width, height = dmd.height;
-  //while (Serial.available() < 4) delay(1);
-  //left   = Serial.read() ?: left;
-  //top    = Serial.read() ?: top;
-  //width  = Serial.read() ?: width;
-  //height = Serial.read() ?: height;
+  uint16_t now = millis();
+  int rv;
 
-  //int lastrecv = millis();
-  
-  for (uint8_t y = 0; y < height; y += 1)
-  for (uint8_t x = 0; x < width; x += 8)
+  while (!timeout || (millis() - timeout < now))
   {
-    /*
-    while (true)
-    {
-      if (Serial.available())
-        break;
-      if (millis() - lastrecv > 1000)
-        return;
-    }
-    lastrecv = millis();
-    //*/
-
-    while (!Serial.available()) {}
-    uint8_t octet = Serial.read();
-
-    for (uint8_t k = 0; k < 8; k += 1)
-      dmd.setPixel((dmd.width-1)  - (left+x+k), (dmd.height-1) - (top+y), ((octet >> k) & 1) ? GRAPHICS_ON : GRAPHICS_OFF);
+    rv = Serial.read();
+    if (rv != -1) break;
   }
-}
 
-void process_uart()
+  return rv;
+}
+*/
+
+bool process_uart()
 {
   static uint8_t prev_available = 0;
   const uint8_t cur_available = Serial.available();
+
+  if (!cur_available)
+    return false;
 
   if (cur_available > prev_available)
   {
     prev_available = cur_available;
     switch (Serial.peek())
     {
-      case 'D':
-      {
-        if (cur_available >= 2)
-        {
-          Serial.read();
-          dmd.setBrightness(Serial.read());
-          prev_available = 0;
-        }
-        break;
-      }
-      case 'G':
-      {
-        if (cur_available >= 2)
-        {
-          Serial.read();
-          uint8_t value = Serial.read();
-          if (value >= 0xfe)
-          {
-            init_cells(0xff - value);
-            do_gameoflife = 0;
-          }
-          else if (value <= 1)
-          {
-            do_gameoflife = value;
-          }
-          /*
-          Serial.print("~");
-          Serial.println(do_gameoflife);
-          */
-          prev_available = 0;
-        }
-        break;
-      }
-      case 'A':
-      {
-        if (cur_available >= 2)
-        {
-          Serial.read();
-          autonoise = Serial.read();
-          prev_available = 0;
-        }
-        break;
-      }
-      
-      case 'N':
-      {
-        if (cur_available >= 2)
-        {
-          Serial.read();
-          noise_amount = Serial.read();
-          /*
-          Serial.print("#");
-          Serial.println(noise_amount);
-          */
-          prev_available = 0;
-        }
-        break;
-      }
-      case '!':
-      {
-        if (cur_available >= 4)
-        {
-          Serial.read();
-          const uint8_t x = (dmd.width-1)  - (uint8_t)Serial.read();
-          const uint8_t y = (dmd.height-1) - (uint8_t)Serial.read();
-          const uint8_t v = Serial.read();
-          dmd.setPixel(x, y, v ? GRAPHICS_ON : GRAPHICS_OFF);
-          /*
-          Serial.print("PX ");
-          Serial.print(x);
-          Serial.print(" ");
-          Serial.print(y);
-          Serial.print(" ");
-          Serial.println(v);
-          */
-          prev_available = 0;
-        }
-        break;
-      }
-
-      case 'B':
-      {
-        Serial.read(); // discard command 'B'
-        spool_bitmap();
-        prev_available = 0;
-        break;
-      }
-
       default:
       {
         Serial.read();
@@ -251,11 +156,150 @@ void process_uart()
       }
     }
   }
+
+  return true;
+}
+
+
+///////////////////////////////////////////////////
+
+void command_dutycycle()
+{
+  if (commandlen != 2) return;
+  dmd.setBrightness(commandbuf[1]);
+}
+
+void command_pixelflut()
+{
+  if (commandlen != 4) return;
+  const uint8_t x = commandbuf[1];
+  const uint8_t y = commandbuf[2];
+  const uint8_t v = commandbuf[3];
+  dmd.setPixel(
+    x,
+    y,
+    v ? GRAPHICS_ON : GRAPHICS_OFF);
+}
+
+void command_text()
+{
+  // 0: big, 1/2: small and row
+  // then length, text
+  
+  if (commandlen < 2) return;
+
+  uint8_t fontsize = commandbuf[1];
+
+  char *str = (char*)commandbuf + 2;
+
+  commandbuf[commandlen] = '\0';
+
+  uint8_t y = 0;
+  switch(fontsize)
+  {
+    default:
+    case 0: y = 0; dmd.selectFont(Arial_Black_16); break;-
+    case 1: y = 0; dmd.selectFont(SystemFont5x7); break;
+    case 2: y = 8; dmd.selectFont(SystemFont5x7); break;
+  }
+
+  dmd.drawString(0, y, str);
+
+  do_gameoflife = false;
+}
+
+void command_bitmap()
+{
+  if (commandlen != 1+128) return;
+
+  do_gameoflife = 0;
+  
+  uint8_t *p = commandbuf+1;
+
+  for (uint8_t y = 0; y < dmd.height; y += 1)
+  for (uint8_t x = 0; x < dmd.width; x += 8)
+    dmd.setByte(x, y, *p++);
+}
+void command_solid()
+{
+  if (commandlen != 2) return;
+
+  uint8_t value = commandbuf[1];
+
+  if (value <= 1)
+  {
+    init_cells(value);
+    do_gameoflife = 0;
+    noise_amount = 0;
+  }
+}
+
+void command_gameoflife()
+{
+  if (commandlen != 2) return;
+
+  uint8_t value = commandbuf[1];
+
+  if (value <= 1)
+  {
+    do_gameoflife = value;
+  }
+  else if (value >= 0xfe) // TODO: remove, obsolete
+  {
+    init_cells(0xff - value);
+    do_gameoflife = 0;
+  }
+
+  if (!do_gameoflife)
+    noise_amount = 0;
+}
+
+void command_noise()
+{
+  if (commandlen != 2) return;
+  noise_amount = commandbuf[1];
+}
+
+void command_autonoise()
+{
+  if (commandlen != 2) return;
+  autonoise = commandbuf[1];
+}
+
+void dispatch_command()
+{
+  switch(commandbuf[0])
+  {
+    case 'D': command_dutycycle(); return;
+    case 'S': command_solid(); return;
+    case 'P': command_pixelflut(); return;
+    case 'T': command_text(); return;
+    case 'B': command_bitmap(); return;
+    case '!':
+    case 'G': command_gameoflife(); return;
+    case 'N': command_noise(); return;
+    case 'A': command_autonoise(); return;
+    default: return;
+  }
+}
+
+void read_commands()
+{
+  while (Serial.available())
+  {
+    commandlen = Serial.read();
+    uint8_t received = Serial.readBytes(commandbuf, commandlen);
+
+    if (received != commandlen)
+      continue;
+
+    dispatch_command();
+  }
 }
 
 // the loop routine runs over and over again forever:
 void loop() {
-  process_uart();
+  read_commands();
 
   if (do_gameoflife)
     iterate_gameoflife();
