@@ -97,7 +97,7 @@ function mqtt_init()
 	m:on("connect", function(client)
 		tmr.alarm(0, 60e3, tmr.ALARM_AUTO, function() 
 			local secs, usecs = rtctime.get()
-			m:publish(basetopic .. "/time", string.format("%d.%06d", secs, usecs), 0, 1)
+			m:publish(basetopic .. "/time", string.format("%d.%06d", secs, usecs), 0, 0)
 		end)
 
 		--print("Subscribing")
