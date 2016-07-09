@@ -116,30 +116,30 @@ function wlan_gotip()
 	--print(string.format("Mask:    %s", mask))
 	--print(string.format("Gateway: %s", gateway))
 
-	tmr.alarm(5, 3600e3, tmr.ALARM_AUTO, function()
-		sntp.sync(
-			"ptbtime1.ptb.de",
-			function(secs_new, usecs_new, server)
-				local secs_own, usecs_own = rtctime.get()
-				local own = secs_own + 1e-6 * usecs_own
-				local new = secs_new + 1e-6 * usecs_new
-				local delta = new - own
-				if math.abs(delta) > 0.1 then
-					local update = own + (new - own) * 0.1
-					local isecs = math.floor(update)
-					local fsecs = update - isecs
-					rtctime.set(isecs, 1e6*fsecs)
-				end
-				m:publish(basetopic .. "/time/delta", delta, 0, 0)
-			end
-		)
-	end)
+	--tmr.alarm(5, 3600e3, tmr.ALARM_AUTO, function()
+	--	sntp.sync(
+	--		"ptbtime1.ptb.de",
+	--		function(secs_new, usecs_new, server)
+	--			local secs_own, usecs_own = rtctime.get()
+	--			local own = secs_own + 1e-6 * usecs_own
+	--			local new = secs_new + 1e-6 * usecs_new
+	--			local delta = new - own
+	--			if math.abs(delta) > 0.1 then
+	--				local update = own + (new - own) * 0.1
+	--				local isecs = math.floor(update)
+	--				local fsecs = update - isecs
+	--				rtctime.set(isecs, 1e6*fsecs)
+	--			end
+	--			m:publish(basetopic .. "/time/delta", delta, 0, 0)
+	--		end
+	--	)
+	--end)
 	sntp.sync(
 		"ptbtime1.ptb.de",
 		function(secs, usecs, server)
 			--print("Time Sync", secs, usecs, server)
 			m:publish(basetopic .. "/started", string.format("%d.%06d", secs, usecs), 0, 1)
-			rtctime.set(secs, usecs)
+			--rtctime.set(secs, usecs)
 		end
 	)
 
