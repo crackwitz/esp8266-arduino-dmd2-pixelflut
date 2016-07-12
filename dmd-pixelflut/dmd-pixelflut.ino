@@ -198,7 +198,7 @@ void command_text()
   switch(fontsize)
   {
     default:
-    case 0: y = 0; dmd.selectFont(Arial_Black_16); break;-
+    case 0: y = 0; dmd.selectFont(Arial_Black_16); break;
     case 1: y = 0; dmd.selectFont(SystemFont5x7); break;
     case 2: y = 8; dmd.selectFont(SystemFont5x7); break;
   }
