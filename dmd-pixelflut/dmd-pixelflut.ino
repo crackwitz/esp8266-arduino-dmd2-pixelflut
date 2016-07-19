@@ -5,15 +5,23 @@
   https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life
  */
 
+#include <util/atomic.h>
 #include <SPI.h>
 #include <DMD2.h>
 #include <fonts/SystemFont5x7.h>
 #include <fonts/Arial_Black_16.h>
 
-#define SERIAL_TIMEOUT 100
+#define USART_BAUDRATE 115200
+#define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 8UL))) - 1) // U2X:8
+#define RECVTIMEOUT 500
 
-uint8_t commandbuf[256];
-uint8_t commandlen = 0;
+uint8_t rxbuf[255];
+uint8_t rxlen = 0;
+uint8_t newdata = 0; // indicates processing needed. incremented by RX ISR, decremented by processing.
+uint32_t lastrecv = 0;
+
+uint8_t *const cmdbuf = rxbuf + 1;
+uint8_t cmdlen = 0;
 
 bool do_gameoflife = true;
 bool autonoise = true;
@@ -36,17 +44,6 @@ void init_cells(uint8_t value) {
       dmd.setPixel(x, y, value ? GRAPHICS_ON : GRAPHICS_OFF);
     }
   }
-}
-
-// the setup routine runs once when you press reset:
-void setup() {
-  Serial.begin(115200);
-  Serial.setTimeout(SERIAL_TIMEOUT);
-  dmd.setBrightness(5);
-  dmd.begin();
-
-  randomSeed(analogRead(0));
-  init_cells(0);
 }
 
 void iterate_gameoflife()
@@ -94,7 +91,7 @@ void iterate_gameoflife()
   if (autonoise)
   {
     bool match = false;
-    for (int8_t i = NOISEHIST-1; i >= 0; i -= 1)
+    for (uint8_t i = 0; i < NOISEHIST; i += 1)
       if (noisehist[i] == curcount)
         match = true;
 
@@ -103,7 +100,6 @@ void iterate_gameoflife()
       if (noise_amount <= 0xff - NOISEINC)
       {
         noise_amount += NOISEINC;
-        //Serial.print("Noise ");Serial.println(noise_amount);
       }
       else
       {
@@ -115,7 +111,6 @@ void iterate_gameoflife()
       if (noise_amount >= NOISEDEC)
       {
         noise_amount -= NOISEDEC;
-        //Serial.print("Noise ");Serial.println(noise_amount);
       }
       else
       {
@@ -124,67 +119,25 @@ void iterate_gameoflife()
     }
   }
 
-  for (int8_t i = NOISEHIST-1; i >= 1; i -= 1)
-    noisehist[i] = noisehist[i-1];
-  noisehist[0] = curcount;
+  for (uint8_t i = 0; i < NOISEHIST-1; i += 1)
+    noisehist[i] = noisehist[i+1];
+  noisehist[NOISEHIST-1] = curcount;
 }
-
-/*
-int read_with_timeout(uint16_t timeout)
-{
-  uint16_t now = millis();
-  int rv;
-
-  while (!timeout || (millis() - timeout < now))
-  {
-    rv = Serial.read();
-    if (rv != -1) break;
-  }
-
-  return rv;
-}
-*/
-
-bool process_uart()
-{
-  static uint8_t prev_available = 0;
-  const uint8_t cur_available = Serial.available();
-
-  if (!cur_available)
-    return false;
-
-  if (cur_available > prev_available)
-  {
-    prev_available = cur_available;
-    switch (Serial.peek())
-    {
-      default:
-      {
-        Serial.read();
-        prev_available = 0;
-        break;
-      }
-    }
-  }
-
-  return true;
-}
-
 
 ///////////////////////////////////////////////////
 
 void command_dutycycle()
 {
-  if (commandlen != 2) return;
-  dmd.setBrightness(commandbuf[1]);
+  if (cmdlen != 2) return;
+  dmd.setBrightness(cmdbuf[1]);
 }
 
 void command_pixelflut()
 {
-  if (commandlen != 4) return;
-  const uint8_t x = commandbuf[1];
-  const uint8_t y = commandbuf[2];
-  const uint8_t v = commandbuf[3];
+  if (cmdlen != 4) return;
+  const uint8_t x = cmdbuf[1];
+  const uint8_t y = cmdbuf[2];
+  const uint8_t v = cmdbuf[3];
   dmd.setPixel(
     x,
     y,
@@ -196,13 +149,14 @@ void command_text()
   // 0: big, 1/2: small and row
   // then length, text
   
-  if (commandlen < 2) return;
+  if (cmdlen < 2) return; // not even font given?
 
-  uint8_t fontsize = commandbuf[1];
+  uint8_t fontsize = cmdbuf[1];
 
-  char *str = (char*)commandbuf + 2;
+  char *str = (char*)cmdbuf + 2;
 
-  commandbuf[commandlen] = '\0';
+  if (cmdbuf[cmdlen-1] != '\0') // strings must be null-terminated
+    return;
 
   uint8_t y = 0;
   switch(fontsize)
@@ -220,11 +174,11 @@ void command_text()
 
 void command_bitmap()
 {
-  if (commandlen != 1+128) return;
+  if (cmdlen != 1 + dmd.width*dmd.height) return;
 
   do_gameoflife = 0;
   
-  uint8_t *p = commandbuf+1;
+  uint8_t *p = cmdbuf+1; // skip packet type
 
   for (uint8_t y = 0; y < dmd.height; y += 1)
   for (uint8_t x = 0; x < dmd.width; x += 8)
@@ -233,33 +187,37 @@ void command_bitmap()
 
 void command_solid()
 {
-  if (commandlen != 2) return;
+  if (cmdlen != 2) return;
 
-  uint8_t value = commandbuf[1];
+  uint8_t value = cmdbuf[1];
 
   if (value <= 1)
   {
     init_cells(value);
-    do_gameoflife = 0;
-    noise_amount = 0;
   }
+  else if (value == 0xff)
+  {
+    for (uint8_t y = 0; y < dmd.height; y += 1)
+    for (uint8_t x = 0; x < dmd.width; x += 8)
+      dmd.setByte(x, y, ~dmd.getByte(x, y));
+  }
+  else
+  {
+    return; // nothing matched
+  }
+
+  // something matched
+  do_gameoflife = 0;
+  noise_amount = 0;
 }
 
 void command_gameoflife()
 {
-  if (commandlen != 2) return;
-
-  uint8_t value = commandbuf[1];
+  if (cmdlen != 2) return;
+  uint8_t value = cmdbuf[1];
 
   if (value <= 1)
-  {
     do_gameoflife = value;
-  }
-  else if (value >= 0xfe) // TODO: remove, obsolete
-  {
-    init_cells(0xff - value);
-    do_gameoflife = 0;
-  }
 
   if (!do_gameoflife)
     noise_amount = 0;
@@ -267,19 +225,21 @@ void command_gameoflife()
 
 void command_noise()
 {
-  if (commandlen != 2) return;
-  noise_amount = commandbuf[1];
+  if (cmdlen != 2) return;
+  noise_amount = cmdbuf[1];
 }
 
 void command_autonoise()
 {
-  if (commandlen != 2) return;
-  autonoise = commandbuf[1];
+  if (cmdlen != 2) return;
+  autonoise = cmdbuf[1];
 }
 
 void dispatch_command()
 {
-  switch(commandbuf[0])
+  cmdlen = rxbuf[0];
+  
+  switch(cmdbuf[0])
   {
     case 'D': command_dutycycle(); return;
     case 'S': command_solid(); return;
@@ -294,23 +254,75 @@ void dispatch_command()
   }
 }
 
-void read_commands()
+void parse_command()
 {
-  while (Serial.available())
+  ATOMIC_BLOCK(ATOMIC_FORCEON)
   {
-    commandlen = Serial.read();
-    uint8_t received = Serial.readBytes(commandbuf, commandlen);
+    if (newdata)
+      newdata--;
+    else
+      return;
+  }
 
-    if (received != commandlen)
-      continue;
+  if (rxlen == 0) // nothing there
+    return;
 
-    dispatch_command();
+  uint8_t const payloadlen = rxbuf[0];
+
+  if (rxlen-1 < payloadlen)
+    return;
+
+  dispatch_command();
+
+  ATOMIC_BLOCK(ATOMIC_FORCEON)
+  {
+    for (uint16_t u = 0, v = 1 + payloadlen; v < rxlen; u += 1, v += 1)
+      rxbuf[u] = rxbuf[v];
+  
+    rxlen -= 1;
+    rxlen -= payloadlen;
   }
 }
 
-// the loop routine runs over and over again forever:
+ISR(USART_RX_vect)
+{
+  uint8_t data = UDR0;
+
+  if (rxlen < sizeof(rxbuf)-1)
+  {
+    rxbuf[rxlen++] = data;
+    lastrecv = millis();
+    if (newdata < 0xff)
+      newdata += 1;
+  }
+}
+
+// the setup routine runs once when you press reset:
+void setup() {
+  dmd.setBrightness(5);
+  dmd.begin();
+
+  randomSeed(analogRead(0));
+  init_cells(0);
+
+  UBRR0L = (uint8_t)(BAUD_PRESCALE & 0xff);
+  UBRR0H = (uint8_t)(BAUD_PRESCALE >> 8);
+  UCSR0A = (1 << U2X0);
+  UCSR0C = (0b011 << UCSZ00);
+  UCSR0B = (1 << RXCIE0) | (1 << RXEN0) | (1 << TXEN0);
+}
+
 void loop() {
-  read_commands();
+  if (newdata)
+  {
+    parse_command();
+  }
+  else if (rxlen > 0 && (millis() - lastrecv > RECVTIMEOUT))
+  {
+    UDR0 = 0xff;
+    rxlen = 0;
+    lastrecv = 0;
+  }
 
   if (do_gameoflife)
     iterate_gameoflife();
