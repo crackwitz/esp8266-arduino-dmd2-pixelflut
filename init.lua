@@ -1,8 +1,12 @@
 -- todo: pixelflut tcp on 2342
 
+-- tmr 0: periodic time pub
+-- tmr 5: arduino reset timer
+
 m = mqtt.Client("cracki-esp-devboard", 10, nil, nil)
 
 basetopic = "cracki/esp-devboard"
+debugtopic = "cracki/esp-debug"
 
 function startswith(self, prefix)
 	return string.sub(self, 1, string.len(prefix)) == prefix
@@ -10,6 +14,14 @@ end
 
 function send_command(message)
 	uart.write(0, string.char(#message) .. message)
+end
+
+function command_reset()
+	gpio.write(reset_pin, gpio.LOW)
+	tmr.alarm(5, 100, tmr.ALARM_SINGLE, function() 
+		gpio.write(reset_pin, gpio.HIGH)
+		gpio.mode(reset_pin, gpio.INPUT, gpio.PULLUP)
+	end)
 end
 
 function command_solid(value)
@@ -39,7 +51,7 @@ function command_bitmap(message)
 end
 
 function command_text(channel, message)
-	send_command("T" .. string.char(channel) .. message)
+	send_command("T" .. string.char(channel) .. message .. "\x00")
 end
 
 function mqtt_onmessage(client, topic, message)
@@ -50,6 +62,13 @@ function mqtt_onmessage(client, topic, message)
 		elseif message == "launch" then
 			command_gameoflife(1)
 
+		end
+
+	elseif topic == basetopic .. "/reset" then
+		if message == "arduino" then
+			command_reset()
+		else
+			node.restart()
 		end
 
 	elseif topic == basetopic .. "/dutycycle" then
@@ -79,7 +98,6 @@ function mqtt_onmessage(client, topic, message)
 
 	elseif topic == basetopic .. "/solid" then
 		command_solid(tonumber(message))
-		-- command_gameoflife(255 - tonumber(message)) -- hotfix for stale arduino firmware
 
 	elseif topic == basetopic .. "/gameoflife" then
 		command_gameoflife(tonumber(message))
@@ -118,24 +136,6 @@ function wlan_gotip()
 	--print(string.format("Mask:    %s", mask))
 	--print(string.format("Gateway: %s", gateway))
 
-	--tmr.alarm(5, 3600e3, tmr.ALARM_AUTO, function()
-	--	sntp.sync(
-	--		"ptbtime1.ptb.de",
-	--		function(secs_new, usecs_new, server)
-	--			local secs_own, usecs_own = rtctime.get()
-	--			local own = secs_own + 1e-6 * usecs_own
-	--			local new = secs_new + 1e-6 * usecs_new
-	--			local delta = new - own
-	--			if math.abs(delta) > 0.1 then
-	--				local update = own + (new - own) * 0.1
-	--				local isecs = math.floor(update)
-	--				local fsecs = update - isecs
-	--				rtctime.set(isecs, 1e6*fsecs)
-	--			end
-	--			m:publish(basetopic .. "/time/delta", delta, 0, 0)
-	--		end
-	--	)
-	--end)
 	sntp.sync(
 		"ptbtime1.ptb.de",
 		function(secs, usecs, server)
@@ -144,7 +144,6 @@ function wlan_gotip()
 			--rtctime.set(secs, usecs)
 		end
 	)
-	--command_dutycycle(20)
 	mqtt_init()
 end
 
@@ -165,12 +164,8 @@ end
 --	end
 
 reset_pin = 2
-gpio.mode(reset_pin, gpio.OUTPUT, gpio.HIGH) -- reset arduino
-gpio.write(reset_pin, gpio.LOW)
-tmr.alarm(0, 100, tmr.ALARM_SINGLE, function() 
-	gpio.write(reset_pin, gpio.HIGH)
-	gpio.mode(reset_pin, gpio.INPUT, gpio.PULLUP)
-end)
+gpio.mode(reset_pin, gpio.OUTPUT, gpio.HIGH) -- to reset arduino
+command_reset()
 
 --handlers = require "handlers"
 wlan_init()
