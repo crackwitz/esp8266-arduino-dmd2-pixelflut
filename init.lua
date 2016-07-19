@@ -1,6 +1,6 @@
 -- todo: pixelflut tcp on 2342
 
-m = mqtt.Client("cracki-esp-devboard", 120, nil, nil)
+m = mqtt.Client("cracki-esp-devboard", 10, nil, nil)
 
 basetopic = "cracki/esp-devboard"
 
@@ -45,7 +45,7 @@ end
 function mqtt_onmessage(client, topic, message)
 	if topic == "runlevel" then
 		if message == "shutdown" then
-			comand_solid(0)
+			command_solid(0)
 
 		elseif message == "launch" then
 			command_gameoflife(1)
@@ -79,7 +79,7 @@ function mqtt_onmessage(client, topic, message)
 
 	elseif topic == basetopic .. "/solid" then
 		command_solid(tonumber(message))
-		command_gameoflife(255 - tonumber(message)) -- hotfix for stale arduino firmware
+		-- command_gameoflife(255 - tonumber(message)) -- hotfix for stale arduino firmware
 
 	elseif topic == basetopic .. "/gameoflife" then
 		command_gameoflife(tonumber(message))
@@ -94,6 +94,8 @@ function mqtt_onmessage(client, topic, message)
 end
 
 function mqtt_init()
+	m:lwt(basetopic .. "/status", "offline", 0, 1)
+	m:on("message", mqtt_onmessage)
 	m:on("connect", function(client)
 		tmr.alarm(0, 60e3, tmr.ALARM_AUTO, function() 
 			local secs, usecs = rtctime.get()
@@ -103,10 +105,10 @@ function mqtt_init()
 		--print("Subscribing")
 		m:subscribe("runlevel", 0)
 		m:subscribe(basetopic .. "/#", 0)
+		m:publish(basetopic .. "/status", "online", 0, 1)
 		m:publish(basetopic .. "/ip", ip, 0, 1)
 
 	end)
-	m:on("message", mqtt_onmessage)
 	m:connect("mqtt.space.aachen.ccc.de")
 end
 
@@ -142,14 +144,14 @@ function wlan_gotip()
 			--rtctime.set(secs, usecs)
 		end
 	)
-
+	--command_dutycycle(20)
 	mqtt_init()
 end
 
 function wlan_init()
-	wifi.sta.eventMonReg(wifi.STA_GOTIP, wlan_gotip)
 	wifi.setmode(wifi.STATION)
 	wifi.sta.config("CCCAC_PSK_2.4GHz", "23cccac42")
+	wifi.sta.eventMonReg(wifi.STA_GOTIP, wlan_gotip)
 	wifi.sta.eventMonStart()
 end
 
@@ -170,5 +172,7 @@ tmr.alarm(0, 100, tmr.ALARM_SINGLE, function()
 	gpio.mode(reset_pin, gpio.INPUT, gpio.PULLUP)
 end)
 
+--handlers = require "handlers"
 wlan_init()
+--dofile("wifi.lua")
 dofile("telnet.lua")

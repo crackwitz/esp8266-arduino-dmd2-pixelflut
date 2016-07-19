@@ -21,6 +21,8 @@ uint8_t noise_amount = 0;
 
 #define NOISEHIST 8
 uint16_t noisehist[NOISEHIST] = {0};
+#define NOISEINC 2
+#define NOISEDEC 1
 
 // How many displays do you have?
 const int WIDTH = 2;
@@ -98,18 +100,26 @@ void iterate_gameoflife()
 
     if (match)
     {
-      if (noise_amount < 0xff)
+      if (noise_amount <= 0xff - NOISEINC)
       {
-        noise_amount += 1;
+        noise_amount += NOISEINC;
         //Serial.print("Noise ");Serial.println(noise_amount);
+      }
+      else
+      {
+        noise_amount = 0xff;
       }
     }
     else
     {
-      if (noise_amount > 0x00)
+      if (noise_amount >= NOISEDEC)
       {
-        noise_amount -= 1;
+        noise_amount -= NOISEDEC;
         //Serial.print("Noise ");Serial.println(noise_amount);
+      }
+      else
+      {
+        noise_amount = 0;
       }
     }
   }
