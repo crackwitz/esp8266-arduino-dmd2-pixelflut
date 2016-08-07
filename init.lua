@@ -71,6 +71,13 @@ function mqtt_onmessage(client, topic, message)
 			node.restart()
 		end
 
+	elseif topic == basetopic .. "/bootload" then
+		port = 4711
+		bootload.start(4711, command_reset)
+
+	elseif topic == basetopic .. "/telnet" then
+		telnet.start()
+
 	elseif topic == basetopic .. "/dutycycle" then
 		command_dutycycle(tonumber(message))
 
@@ -121,8 +128,11 @@ function mqtt_init()
 		end)
 
 		--print("Subscribing")
-		m:subscribe("runlevel", 0)
-		m:subscribe(basetopic .. "/#", 0)
+		-- retained messages are only received for first subscribe() call
+		m:subscribe {
+			["runlevel"] = 0,
+			[basetopic .. "/#"] = 0,
+		}
 		m:publish(basetopic .. "/status", "online", 0, 1)
 		m:publish(basetopic .. "/ip", ip, 0, 1)
 
@@ -167,7 +177,8 @@ reset_pin = 2
 gpio.mode(reset_pin, gpio.OUTPUT, gpio.HIGH) -- to reset arduino
 command_reset()
 
+bootload = require "bootload"
+telnet = require "telnet"
 --handlers = require "handlers"
 wlan_init()
 --dofile("wifi.lua")
-dofile("telnet.lua")

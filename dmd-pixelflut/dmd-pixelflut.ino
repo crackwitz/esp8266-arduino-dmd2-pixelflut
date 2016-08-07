@@ -153,10 +153,10 @@ void command_text()
 
   uint8_t fontsize = cmdbuf[1];
 
-  char *str = (char*)cmdbuf + 2;
-
   if (cmdbuf[cmdlen-1] != '\0') // strings must be null-terminated
     return;
+
+  char *str = (char*)cmdbuf + 2;
 
   uint8_t y = 0;
   switch(fontsize)
